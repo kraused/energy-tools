@@ -1,0 +1,1 @@
+ACTION=="add", NAME="cpu/%n/rapl", MODE="0444"

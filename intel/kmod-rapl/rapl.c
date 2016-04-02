@@ -215,9 +215,12 @@ static void __exit rapl_exit(void)
 {
 	int i;
 
+	cpu_notifier_register_begin();
 	for_each_online_cpu(i) {
 		_teardown_device(i, &_rapl_devs[i]);
 	}
+	__unregister_cpu_notifier(&_rapl_cpu_callback);
+	cpu_notifier_register_done();
 	class_destroy(_rapl_class);
 	unregister_chrdev(MAJOR(_rapl_devt), "rapl");
 }
