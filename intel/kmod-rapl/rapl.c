@@ -6,8 +6,9 @@
 #include <linux/fs.h>
 #include <linux/cdev.h>
 #include <linux/device.h>
-#include <linux/cpu.h>
 #include <linux/uaccess.h>
+#include <linux/cpu.h>
+#include <linux/notifier.h>
 
 #include <asm/msr.h>
 
@@ -33,7 +34,7 @@ static int _allow_access_to_msr(u32 msr)
 	return 0;
 }
 
-static ssize_t _do_read(struct file *filp, char __user *buff, size_t count, loff_t *offp)
+static ssize_t _rapl_do_read(struct file *filp, char __user *buff, size_t count, loff_t *offp)
 {
 	int err;
 	u32 data[2];
@@ -66,17 +67,17 @@ out:
 	return err;
 }
 
-static int _do_open(struct inode *inode, struct file *filp)
+static int _rapl_do_open(struct inode *inode, struct file *filp)
 {
 	return 0;
 }
 
-static const struct file_operations _rapl_fops = 
+static const struct file_operations _rapl_fops =
 {
 	.owner  = THIS_MODULE,
 	.llseek = no_seek_end_llseek,
-	.read   = _do_read,
-	.open   = _do_open
+	.read   = _rapl_do_read,
+	.open   = _rapl_do_open
 };
 
 static int _setup_device(int cpu, struct cdev **cdev)
@@ -112,7 +113,7 @@ static int _setup_device(int cpu, struct cdev **cdev)
 
 fail:
 	cdev_del((*cdev));
-	(*cdev) = NULL;	
+	(*cdev) = NULL;
 out:
 	return err;
 }
@@ -131,6 +132,33 @@ static char *_rapl_devtde(struct device *dev, umode_t *mode)
 {
 	return kasprintf(GFP_KERNEL, "cpu/%u/rapl", MINOR(dev->devt));
 }
+
+static int _rapl_cpu_callback_notifier(struct notifier_block *self,
+                                       unsigned long action, void *data)
+{
+	int err = 0;
+	unsigned int cpu = *((unsigned int *)data);
+
+	switch (action)
+	{
+	case CPU_UP_PREPARE:
+		err = _setup_device(cpu, &_rapl_devs[cpu]);
+		break;
+	case CPU_UP_CANCELED:
+	case CPU_UP_CANCELED_FROZEN:
+	case CPU_DEAD:
+		_teardown_device(cpu, &_rapl_devs[cpu]);
+		err = 0;
+		break;
+	}
+
+	return notifier_from_errno(err);
+}
+
+struct notifier_block __refdata _rapl_cpu_callback =
+{
+	.notifier_call = _rapl_cpu_callback_notifier
+};
 
 static int __init rapl_init(void)
 {
@@ -155,20 +183,26 @@ static int __init rapl_init(void)
 
 	_rapl_class->devnode = _rapl_devtde;
 
+	cpu_notifier_register_begin();
 	for_each_online_cpu(i) {
 		err = _setup_device(i, &_rapl_devs[i]);
 		if (unlikely(err)) {
 			goto fail;
 		}
 	}
+	__register_cpu_notifier(&_rapl_cpu_callback);
+	cpu_notifier_register_done();
 
 	err = 0;
 	goto out;
 
 fail:
+	cpu_notifier_register_begin();
 	for_each_online_cpu(i) {
 		_teardown_device(i, &_rapl_devs[i]);
 	}
+	__unregister_cpu_notifier(&_rapl_cpu_callback);
+	cpu_notifier_register_done();
 	if (_rapl_class) {
 		class_destroy(_rapl_class);
 	}
