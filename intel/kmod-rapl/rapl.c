@@ -1,6 +1,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/fs.h>
@@ -20,6 +21,42 @@ MODULE_VERSION("1.0");
 static dev_t _rapl_devt;
 static struct cdev *_rapl_devs[NR_CPUS];
 static struct class *_rapl_class;
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,5,0)
+
+static loff_t no_seek_end_llseek(struct file *filp, loff_t offset, int whence)
+{
+	if ((SEEK_SET == whence) || (SEEK_CUR == whence)) {
+		return generic_file_llseek_size(filp, offset, whence, OFFSET_MAX, 0);
+	}
+
+	return -EINVAL;
+}
+
+#endif
+
+/* Probably not the correct version to compare against but good enough to distinguish between
+ * the 3.10 kernel in RHEL7 and the 2.6.32 kernel in RHEL6.
+ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
+
+static struct inode *file_inode(struct file *filp)
+{
+	return filp->f_mapping->host;
+}
+
+#define cpu_notifier_register_begin()	do { } while(0)
+#define cpu_notifier_register_done()	do { } while(0)
+#define __register_cpu_notifier(X)	register_hotcpu_notifier(X)
+#define __unregister_cpu_notifier(X)	unregister_hotcpu_notifier(X)
+
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
+#	define MODE	mode_t
+#else
+#	define MODE	umode_t
+#endif
 
 static int _allow_access_to_msr(u32 msr)
 {
@@ -128,7 +165,7 @@ static void _teardown_device(int cpu, struct cdev **dev)
 	}
 }
 
-static char *_rapl_devtde(struct device *dev, umode_t *mode)
+static char *_rapl_devtde(struct device *dev, MODE *mode)
 {
 	return kasprintf(GFP_KERNEL, "cpu/%u/rapl", MINOR(dev->devt));
 }
