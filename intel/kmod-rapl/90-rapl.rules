@@ -1,1 +1,1 @@
-ACTION=="add", NAME="cpu/%n/rapl", MODE="0444"
+ACTION=="add", KERNEL=="rapl[0-9]*", NAME="cpu/%n/rapl", MODE="0444"
